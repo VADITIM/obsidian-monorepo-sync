@@ -18,7 +18,7 @@ Download `main.js` and `manifest.json` from the
 `<your vault>/.obsidian/plugins/monorepo-git-sync/`, then enable **Monorepo Git Sync** under
 Settings → Community plugins.
 
-Requires Obsidian 1.8.7 or newer.
+Requires Obsidian 1.13.0 or newer.
 
 ## Releases
 
@@ -67,3 +67,14 @@ Pick one:
   vault and the repo folder both already hold the same file with different content.
 - `.obsidian/` is synced (plugins, themes, settings) except the paths in **Ignore**, which by
   default leaves out `.trash` and the per-device workspace layout.
+
+## Disclosures
+
+Obsidian's review flags these, and both are how the plugin works:
+
+- **Runs `git`** (via Node's `child_process`) to clone, commit, pull and push. Nothing else is
+  executed.
+- **Reads and writes files outside the vault API** (via Node's `fs`): the vault folder itself and
+  the plugin's own clone in `~/.obsidian-git-sync/`. Nothing else on disk is touched.
+- **Network**: only `git` talks to the repository you configure. The plugin makes no other
+  requests and collects no telemetry.

@@ -7,12 +7,16 @@
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
-    "build": "tsc --noEmit && node esbuild.config.mjs production"
+    "build": "tsc --noEmit && eslint src && node esbuild.config.mjs production",
+    "lint": "eslint src"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
+    "@eslint/js": "^10.0.1",
     "esbuild": "^0.25.0",
+    "eslint": "^10.12.0",
+    "eslint-plugin-obsidianmd": "^0.4.2",
     "obsidian": "latest",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.71.1"
   }
 }
