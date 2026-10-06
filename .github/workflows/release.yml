@@ -22,19 +22,29 @@ jobs:
           ref: master
           fetch-depth: 0
 
+      # GitHub can deliver the same push more than once; release each commit only once.
+      - id: check
+        run: |
+          if [ -n "$(git tag --contains "$GITHUB_SHA")" ]; then echo "released=true" >> "$GITHUB_OUTPUT"; fi
+
       - uses: actions/setup-node@v4
+        if: steps.check.outputs.released != 'true'
         with:
           node-version: 22
           cache: npm
 
       - run: npm ci
+        if: steps.check.outputs.released != 'true'
 
       - id: version
+        if: steps.check.outputs.released != 'true'
         run: echo "version=$(node version-bump.mjs)" >> "$GITHUB_OUTPUT"
 
       - run: npm run build
+        if: steps.check.outputs.released != 'true'
 
       - name: Commit version and tag
+        if: steps.check.outputs.released != 'true'
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
@@ -45,6 +55,7 @@ jobs:
           git push origin HEAD:master "$VERSION"
 
       - name: Publish release
+        if: steps.check.outputs.released != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
