@@ -1,6 +1,6 @@
 # Monorepo Git Sync
 
-Syncs an Obsidian vault with **one folder** of a shared Git repository, so all your vaults
+Syncs an Obsidian vault with **one folder** of a shared GitHub repository, so all your vaults
 live in a single repo:
 
 ```
@@ -9,7 +9,7 @@ Obsidian/            ← one GitHub repo (private or public)
 └── Personal/        ← vault "Personal" syncs here
 ```
 
-Desktop only. Uses the `git` installed on your machine.
+Works on desktop and Android. Talks to GitHub's API directly, so no `git` install is needed.
 
 ## Install
 
@@ -18,7 +18,53 @@ Download `main.js` and `manifest.json` from the
 `<your vault>/.obsidian/plugins/monorepo-git-sync/`, then enable **Monorepo Git Sync** under
 Settings → Community plugins.
 
+On Android, the vault folder is wherever you created the vault (often `Documents/<vault>`). Use
+a file manager that shows hidden folders to reach `.obsidian`.
+[BRAT](https://github.com/TfTHacker/obsidian42-brat) can install it from this repository instead:
+add `VADITIM/obsidian-monorepo-sync` as a beta plugin.
+
 Requires Obsidian 1.13.0 or newer.
+
+## Setup
+
+1. Create a **fine-grained token** on GitHub (Settings → Developer settings → Personal access
+   tokens → Fine-grained tokens). Repository access: only your vault repository. Permissions:
+   **Contents → Read and write**.
+2. In the plugin settings:
+
+   | Field        | Example                            |
+   | ------------ | ---------------------------------- |
+   | Repository   | `https://github.com/you/Obsidian` or `you/Obsidian` |
+   | GitHub token | the token from step 1              |
+   | Vault folder | `Work`                             |
+   | Interval     | `1` (minutes)                      |
+
+The repository needs at least one commit (create it with a README). The plugin syncs on startup,
+every interval, and from the ribbon icon or the **Sync now** command.
+
+The token is kept in this device's local storage, never in the synced settings, so enter it once
+per device.
+
+## How it works
+
+- Each run reads the branch head. If nothing changed remotely and nothing changed locally, that
+  one request is the whole sync.
+- Only this vault's folder is read or written. Other vaults in the repo are never downloaded.
+- Changes are decided per file against the last synced state: pulled, pushed, or both. All local
+  changes go up as one commit. If another device pushed in between, the run starts over.
+- **Conflicts never lose data.** Your local version wins, and the other side is saved next to it
+  as `note.sync-conflict-YYYYMMDD-HHMMSS.md`. The same happens on the first sync, when the vault
+  and the repo folder both hold the same file with different content. Files that differ only in
+  line endings (CRLF vs LF) are not conflicts.
+- `.obsidian/` is synced (plugins, themes, settings) except the paths in **Ignore**, which by
+  default leaves out `.trash` and the per-device workspace layout. The plugin's own `state.json`
+  is per device and never synced.
+
+## Disclosures
+
+- **Network**: requests go only to `api.github.com`, for the repository you configure,
+  authenticated with your token. No telemetry.
+- **Files**: reads and writes only inside this vault, including the config folder.
 
 ## Releases
 
@@ -32,49 +78,3 @@ version. The workflow commits the new version back to `master`, so pull before y
 npm install
 npm run build
 ```
-
-## Setup
-
-In the plugin settings:
-
-| Field        | Example                            |
-| ------------ | ---------------------------------- |
-| Repository   | `git@github.com:you/Obsidian.git` or `https://github.com/you/Obsidian.git` |
-| Vault folder | `Work`                             |
-| Interval     | `1` (minutes)                      |
-
-It syncs on startup, every interval, and from the ribbon icon or the **Sync now** command.
-
-### Authentication
-
-Pick one:
-
-- **SSH**: a key added to GitHub, either without a passphrase or loaded in `ssh-agent`.
-- **HTTPS, private repo**: paste a fine-grained GitHub token (Contents: read and write, limited to
-  that repo) into **GitHub token**. It is stored only on this device and never synced.
-- **HTTPS without a token**: Git Credential Manager (bundled with Git for Windows). Run one
-  `git ls-remote <url>` from a terminal first so the credentials are stored.
-
-## How it works
-
-- The plugin keeps a partial, sparse clone in `~/.obsidian-git-sync/<vault>-<hash>/`. Only this
-  vault's folder is checked out there, never inside the vault.
-- Each run copies vault changes into the clone, commits them, merges `origin`, copies incoming
-  changes back into the vault, and pushes.
-- Commits only touch this vault's folder, so several vaults can sync to the same repo at once.
-- **Conflicts never lose data.** Your local version wins, and the other side is saved next to it
-  as `note.sync-conflict-YYYYMMDD-HHMMSS.md`. The same thing happens on the first sync, when the
-  vault and the repo folder both already hold the same file with different content.
-- `.obsidian/` is synced (plugins, themes, settings) except the paths in **Ignore**, which by
-  default leaves out `.trash` and the per-device workspace layout.
-
-## Disclosures
-
-Obsidian's review flags these, and both are how the plugin works:
-
-- **Runs `git`** (via Node's `child_process`) to clone, commit, pull and push. Nothing else is
-  executed.
-- **Reads and writes files outside the vault API** (via Node's `fs`): the vault folder itself and
-  the plugin's own clone in `~/.obsidian-git-sync/`. Nothing else on disk is touched.
-- **Network**: only `git` talks to the repository you configure. The plugin makes no other
-  requests and collects no telemetry.

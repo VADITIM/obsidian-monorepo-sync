@@ -5,13 +5,12 @@
     "moduleResolution": "node",
     "lib": [
       "DOM",
-      "ES2020"
+      "ES2022"
     ],
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "isolatedModules": true,
-    "types": []
+    "isolatedModules": true
   },
   "include": [
     "src/**/*.ts"

@@ -1,17 +1,96 @@
-import { App, FileSystemAdapter, Notice, Plugin, PluginSettingTab, SettingDefinitionItem } from "obsidian";
-import { VaultSync, cacheDir, normalizeFolder } from "./sync";
+import { App, Notice, Platform, Plugin, PluginSettingTab, SettingDefinitionItem, TFolder, requestUrl } from "obsidian";
+import { Fetcher, GitHub, parseRepo } from "./github";
+import { Local, LocalFile, State, VaultSync, normalizeFolder } from "./sync";
 
 interface Settings {
   repoUrl: string;
   folder: string;
   branch: string;
   intervalMinutes: number;
-  gitPath: string;
   ignore: string;
 }
 
 // Kept in this device's localStorage, never in data.json, because data.json is synced into the repo.
 const TOKEN_KEY = "monorepo-git-sync-token";
+
+const fetcher: Fetcher = async (req) => {
+  const res = await requestUrl({ ...req, throw: false });
+  return { status: res.status, text: res.text, arrayBuffer: res.arrayBuffer };
+};
+
+/** Dot paths (the config folder, .trash, …) are outside Obsidian's file index and go through the adapter. */
+function hidden(path: string): boolean {
+  return path.split("/").some((s) => s.startsWith("."));
+}
+
+/** The vault through Obsidian's own APIs, which work the same on desktop and mobile. */
+class VaultFiles implements Local {
+  constructor(private app: App) {}
+
+  async list(ignored: (path: string) => boolean): Promise<LocalFile[]> {
+    const out: LocalFile[] = this.app.vault
+      .getFiles()
+      .filter((f) => !ignored(f.path))
+      .map((f) => ({ path: f.path, mtime: f.stat.mtime, size: f.stat.size }));
+    const adapter = this.app.vault.adapter;
+    const walk = async (dir: string) => {
+      const { files, folders } = await adapter.list(dir);
+      for (const path of files) {
+        if (ignored(path)) continue;
+        const stat = await adapter.stat(path);
+        if (stat) out.push({ path, mtime: stat.mtime, size: stat.size });
+      }
+      for (const path of folders) if (!ignored(path)) await walk(path);
+    };
+    const root = await adapter.list("/");
+    for (const path of root.files) {
+      const stat = hidden(path) && !ignored(path) ? await adapter.stat(path) : null;
+      if (stat) out.push({ path, mtime: stat.mtime, size: stat.size });
+    }
+    for (const path of root.folders) if (hidden(path) && !ignored(path)) await walk(path);
+    return out;
+  }
+
+  read(path: string): Promise<ArrayBuffer> {
+    return this.app.vault.adapter.readBinary(path);
+  }
+
+  async write(path: string, data: ArrayBuffer) {
+    const { vault } = this.app;
+    const parts = path.split("/").slice(0, -1);
+    for (let i = 1; i <= parts.length; i++) {
+      const dir = parts.slice(0, i).join("/");
+      if (hidden(dir)) {
+        if (!(await vault.adapter.exists(dir))) await vault.adapter.mkdir(dir);
+      } else if (!vault.getFolderByPath(dir)) {
+        await vault.createFolder(dir);
+      }
+    }
+    const file = hidden(path) ? null : vault.getFileByPath(path);
+    if (hidden(path)) await vault.adapter.writeBinary(path, data);
+    else if (file) await vault.modifyBinary(file, data);
+    else await vault.createBinary(path, data);
+    const stat = await vault.adapter.stat(path);
+    return { mtime: stat?.mtime ?? 0, size: stat?.size ?? data.byteLength };
+  }
+
+  async remove(path: string) {
+    if (hidden(path)) {
+      await this.app.vault.adapter.remove(path);
+      return;
+    }
+    const file = this.app.vault.getFileByPath(path);
+    if (!file) return;
+    let parent: TFolder | null = file.parent;
+    await this.app.fileManager.trashFile(file);
+    // Drop folders the deletion left empty, as the other device no longer has them either.
+    while (parent && !parent.isRoot() && parent.children.length === 0) {
+      const up: TFolder | null = parent.parent;
+      await this.app.fileManager.trashFile(parent);
+      parent = up;
+    }
+  }
+}
 
 export default class MonorepoGitSync extends Plugin {
   settings!: Settings;
@@ -26,7 +105,6 @@ export default class MonorepoGitSync extends Plugin {
       folder: "",
       branch: "",
       intervalMinutes: 1,
-      gitPath: "git",
       ignore: [".trash", `${configDir}/workspace.json`, `${configDir}/workspace-mobile.json`].join("\n"),
     };
     const saved = (await this.loadData()) as Partial<Settings> | null;
@@ -35,7 +113,7 @@ export default class MonorepoGitSync extends Plugin {
     this.setStatus("idle");
     this.addSettingTab(new SyncSettingTab(this.app, this));
     this.addCommand({ id: "sync-now", name: "Sync now", callback: () => void this.sync(true) });
-    this.addRibbonIcon("refresh-cw", "Sync vault with Git", () => void this.sync(true));
+    this.addRibbonIcon("refresh-cw", "Sync vault with GitHub", () => void this.sync(true));
     this.schedule();
     this.app.workspace.onLayoutReady(() => void this.sync(false));
   }
@@ -55,22 +133,6 @@ export default class MonorepoGitSync extends Plugin {
     this.status.setText(`Git sync: ${text}`);
   }
 
-  private config() {
-    const adapter = this.app.vault.adapter;
-    if (!(adapter instanceof FileSystemAdapter)) throw new Error("Only desktop vaults are supported.");
-    const s = this.settings;
-    return {
-      vaultPath: adapter.getBasePath(),
-      vaultName: this.app.vault.getName(),
-      repoUrl: s.repoUrl.trim(),
-      folder: normalizeFolder(s.folder.trim()),
-      branch: s.branch.trim(),
-      gitPath: s.gitPath.trim() || "git",
-      ignore: s.ignore.split("\n").map((l) => normalizeFolder(l.trim())).filter(Boolean),
-      token: this.token,
-    };
-  }
-
   get token(): string {
     const value: unknown = this.app.loadLocalStorage(TOKEN_KEY);
     return typeof value === "string" ? value : "";
@@ -80,22 +142,40 @@ export default class MonorepoGitSync extends Plugin {
     this.app.saveLocalStorage(TOKEN_KEY, value.trim() || null);
   }
 
-  cachePath(): string {
-    return cacheDir(this.config());
+  private get statePath() {
+    return `${this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`}/state.json`;
   }
 
   async sync(manual: boolean) {
     if (this.running) return;
-    const cfg = this.config();
-    if (!cfg.repoUrl || !cfg.folder) {
+    const s = this.settings;
+    const repo = parseRepo(s.repoUrl);
+    const folder = normalizeFolder(s.folder.trim());
+    const missing = !repo ? "a GitHub repository" : !folder ? "the vault folder" : !this.token ? "a GitHub token" : null;
+    if (missing) {
       this.setStatus("not configured");
-      if (manual) new Notice("Set the repository URL and vault folder in the plugin settings.");
+      if (manual) new Notice(`Git sync: set ${missing} in the plugin settings.`);
       return;
     }
     this.running = true;
     this.setStatus("syncing…");
+    const adapter = this.app.vault.adapter;
+    const statePath = this.statePath;
+    const device = Platform.isAndroidApp ? "Android" : Platform.isIosApp ? "iOS" : "desktop";
     try {
-      const r = await new VaultSync(cfg).sync();
+      const r = await new VaultSync({
+        github: new GitHub(fetcher, repo!, this.token),
+        key: `${repo}\n${folder}\n${s.branch.trim()}`,
+        folder,
+        branch: s.branch.trim(),
+        ignore: [...s.ignore.split("\n").map((l) => normalizeFolder(l.trim())), statePath].filter(Boolean),
+        message: `${this.app.vault.getName()} (${device}): ${new Date().toISOString()}`,
+        local: new VaultFiles(this.app),
+        store: {
+          load: async () => ((await adapter.exists(statePath)) ? (JSON.parse(await adapter.read(statePath)) as State) : null),
+          save: (state) => adapter.write(statePath, JSON.stringify(state)),
+        },
+      }).sync();
       this.setStatus(`synced ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
       if (r.conflicts.length) {
         new Notice(`Git sync: kept your version, saved the other side as:\n${r.conflicts.join("\n")}`, 15_000);
@@ -122,12 +202,17 @@ class SyncSettingTab extends PluginSettingTab {
     return [
       {
         name: "Repository",
-        desc: "SSH or HTTPS link of the repository that holds all your vaults.",
-        control: { type: "text", key: "repoUrl", placeholder: "git@github.com:you/Obsidian.git" },
+        desc: "GitHub repository that holds all your vaults, as a link or owner/name.",
+        control: {
+          type: "text",
+          key: "repoUrl",
+          placeholder: "https://github.com/you/Obsidian",
+          validate: (v) => (!v.trim() || parseRepo(v) ? undefined : "Not a GitHub repository link."),
+        },
       },
       {
         name: "GitHub token",
-        desc: "Needed for a private repository over HTTPS. Use a fine-grained token with read and write access to its contents. Stored only on this device, never synced.",
+        desc: "Fine-grained token with read and write access to the repository's contents. Stored only on this device, never synced.",
         aliases: ["password", "authentication", "private"],
         render: (setting) => {
           setting.addText((t) => {
@@ -162,13 +247,8 @@ class SyncSettingTab extends PluginSettingTab {
         control: { type: "textarea", key: "ignore", rows: 5 },
       },
       {
-        name: "Git executable",
-        desc: "Path to Git if it is not on Obsidian's PATH.",
-        control: { type: "text", key: "gitPath", placeholder: "git" },
-      },
-      {
         name: "Sync now",
-        desc: `Local clone: ${this.plugin.cachePath()}`,
+        desc: "Sync this vault with GitHub immediately.",
         action: () => void this.plugin.sync(true),
       },
     ];

@@ -1,10 +1,10 @@
 {
   "id": "monorepo-git-sync",
   "name": "Monorepo Git Sync",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "minAppVersion": "1.13.0",
-  "description": "Sync this vault with one folder of a shared GitHub repository that holds all your vaults.",
+  "description": "Sync this vault with one folder of a shared GitHub repository that holds all your vaults. Works on desktop and Android.",
   "author": "VADITIM",
   "authorUrl": "https://github.com/VADITIM",
-  "isDesktopOnly": true
+  "isDesktopOnly": false
 }
