@@ -42,8 +42,9 @@ Requires Obsidian 1.13.0 or newer.
 The repository needs at least one commit (create it with a README). The plugin syncs on startup,
 every interval, and from the ribbon icon or the **Sync now** command.
 
-The token is kept in this device's local storage, never in the synced settings, so enter it once
-per device.
+The token is saved in the plugin's `data.json`, which syncs with the vault, so a copied vault
+needs no re-entry. That puts it in plaintext in the repository: keep the repository private and
+scope the token to that one repository. Don't add `data.json` to the ignore list.
 
 ## How it works
 

@@ -8,9 +8,11 @@ interface Settings {
   branch: string;
   intervalMinutes: number;
   ignore: string;
+  /** Stored in data.json on purpose: it syncs with the vault, so a copied vault needs no re-entry. */
+  token: string;
 }
 
-// Kept in this device's localStorage, never in data.json, because data.json is synced into the repo.
+// Older versions kept the token in this device's localStorage; adopted into settings on load.
 const TOKEN_KEY = "monorepo-git-sync-token";
 
 const fetcher: Fetcher = async (req) => {
@@ -106,9 +108,17 @@ export default class MonorepoGitSync extends Plugin {
       branch: "",
       intervalMinutes: 1,
       ignore: [".trash", `${configDir}/workspace.json`, `${configDir}/workspace-mobile.json`].join("\n"),
+      token: "",
     };
     const saved = (await this.loadData()) as Partial<Settings> | null;
     this.settings = { ...defaults, ...saved };
+    if (!this.settings.token) {
+      const legacy: unknown = this.app.loadLocalStorage(TOKEN_KEY);
+      if (typeof legacy === "string" && legacy) {
+        this.settings.token = legacy;
+        await this.saveData(this.settings);
+      }
+    }
     this.status = this.addStatusBarItem();
     this.setStatus("idle");
     this.addSettingTab(new SyncSettingTab(this.app, this));
@@ -134,12 +144,7 @@ export default class MonorepoGitSync extends Plugin {
   }
 
   get token(): string {
-    const value: unknown = this.app.loadLocalStorage(TOKEN_KEY);
-    return typeof value === "string" ? value : "";
-  }
-
-  set token(value: string) {
-    this.app.saveLocalStorage(TOKEN_KEY, value.trim() || null);
+    return this.settings.token.trim();
   }
 
   private get statePath() {
@@ -212,12 +217,15 @@ class SyncSettingTab extends PluginSettingTab {
       },
       {
         name: "GitHub token",
-        desc: "Fine-grained token with read and write access to the repository's contents. Stored only on this device, never synced.",
+        desc: "Fine-grained token with read and write access to the repository's contents. Saved in this plugin's data.json, so it syncs to your other devices. Keep the repository private.",
         aliases: ["password", "authentication", "private"],
         render: (setting) => {
           setting.addText((t) => {
             t.inputEl.type = "password";
-            t.setPlaceholder("Paste token").setValue(this.plugin.token).onChange((v) => (this.plugin.token = v));
+            t.setPlaceholder("Paste token").setValue(this.plugin.settings.token).onChange(async (v) => {
+              this.plugin.settings.token = v.trim();
+              await this.plugin.saveSettings();
+            });
           });
         },
       },
