@@ -1,6 +1,6 @@
-import { App, Notice, Platform, Plugin, PluginSettingTab, SettingDefinitionItem, TFolder, requestUrl } from "obsidian";
+import { App, FuzzySuggestModal, Notice, Platform, Plugin, PluginSettingTab, SettingDefinitionItem, TFolder, requestUrl } from "obsidian";
 import { Fetcher, GitHub, parseRepo } from "./github";
-import { Local, LocalFile, State, VaultSync, normalizeFolder } from "./sync";
+import { Local, LocalFile, State, TRASH, VaultSync, normalizeFolder, parseTrash } from "./sync";
 
 interface Settings {
   repoUrl: string;
@@ -94,6 +94,45 @@ class VaultFiles implements Local {
   }
 }
 
+interface Deleted {
+  path: string;
+  original: string;
+  deleted: number;
+}
+
+/** Lists the files the sync deleted in the last days and moves the chosen one back. */
+class RestoreModal extends FuzzySuggestModal<Deleted> {
+  constructor(app: App, private items: Deleted[], private files: VaultFiles) {
+    super(app);
+    this.setPlaceholder("Restore a deleted file");
+  }
+
+  getItems() {
+    return this.items;
+  }
+
+  getItemText(d: Deleted) {
+    return `${d.original}  (deleted ${new Date(d.deleted).toLocaleString()})`;
+  }
+
+  onChooseItem(d: Deleted) {
+    void this.restore(d);
+  }
+
+  private async restore(d: Deleted) {
+    const adapter = this.app.vault.adapter;
+    let target = d.original;
+    if (await adapter.exists(target)) {
+      const dot = target.lastIndexOf(".");
+      const cut = dot > target.lastIndexOf("/") + 1 ? dot : target.length;
+      target = `${target.slice(0, cut)} (restored)${target.slice(cut)}`;
+    }
+    await this.files.write(target, await adapter.readBinary(d.path));
+    await adapter.remove(d.path); // moved, not copied; the next sync drops it from the repository too
+    new Notice(`Restored ${target}`);
+  }
+}
+
 export default class MonorepoGitSync extends Plugin {
   settings!: Settings;
   private status!: HTMLElement;
@@ -123,9 +162,29 @@ export default class MonorepoGitSync extends Plugin {
     this.setStatus("idle");
     this.addSettingTab(new SyncSettingTab(this.app, this));
     this.addCommand({ id: "sync-now", name: "Sync now", callback: () => void this.sync(true) });
+    this.addCommand({ id: "restore-deleted", name: "Restore deleted file", callback: () => void this.restore() });
     this.addRibbonIcon("refresh-cw", "Sync vault with GitHub", () => void this.sync(true));
     this.schedule();
     this.app.workspace.onLayoutReady(() => void this.sync(false));
+  }
+
+  private async restore() {
+    const adapter = this.app.vault.adapter;
+    const items: Deleted[] = [];
+    const walk = async (dir: string) => {
+      const { files, folders } = await adapter.list(dir);
+      for (const path of files) {
+        const t = parseTrash(path);
+        if (t) items.push({ path, original: t.original, deleted: t.deleted });
+      }
+      for (const f of folders) await walk(f);
+    };
+    if (await adapter.exists(TRASH)) await walk(TRASH);
+    if (!items.length) {
+      new Notice("Git sync: nothing deleted in the last 2 days.");
+      return;
+    }
+    new RestoreModal(this.app, items.sort((a, b) => b.deleted - a.deleted), new VaultFiles(this.app)).open();
   }
 
   async saveSettings() {

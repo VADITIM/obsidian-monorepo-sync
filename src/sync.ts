@@ -83,13 +83,35 @@ function sameText(a: ArrayBuffer, b: ArrayBuffer): boolean {
   return x.length === y.length && x.every((c, i) => c === y[i]);
 }
 
+/** UTC, sortable, safe in file names: 20261008-081733. */
+function stamp(): string {
+  return new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
+}
+
 function conflictName(path: string): string {
-  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
   const slash = path.lastIndexOf("/");
   const dot = path.lastIndexOf(".");
   const cut = dot > slash + 1 ? dot : path.length;
-  return `${path.slice(0, cut)}.sync-conflict-${stamp}${path.slice(cut)}`;
+  return `${path.slice(0, cut)}.sync-conflict-${stamp()}${path.slice(cut)}`;
 }
+
+/** Files deleted by a sync are kept here, as `.tmp/<stamp>/<original path>`, and synced like any other file. */
+export const TRASH = ".tmp";
+const TRASH_DAYS = 2;
+const TRASH_ENTRY = /^\.tmp\/(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)(\d\d)\/(.+)$/;
+
+/** When a trash entry was deleted and where it came from, or null for any other path. */
+export function parseTrash(path: string): { deleted: number; original: string } | null {
+  const m = TRASH_ENTRY.exec(path);
+  if (!m) return null;
+  const [y, mo, d, h, mi, s] = m.slice(1, 7).map(Number);
+  return { deleted: Date.UTC(y, mo - 1, d, h, mi, s), original: m[7] };
+}
+
+const expired = (path: string): boolean => {
+  const t = parseTrash(path);
+  return t !== null && Date.now() - t.deleted > TRASH_DAYS * 86_400_000;
+};
 
 async function pool<T>(items: T[], size: number, fn: (item: T) => Promise<void>): Promise<void> {
   let next = 0;
@@ -162,11 +184,18 @@ export class VaultSync {
     const remove: string[] = [];
     const push: string[] = [];
     const drop: string[] = [];
+    const expire: string[] = [];
     const conflicted: string[] = [];
     for (const p of new Set([...files.keys(), ...remote.keys()])) {
       const l = files.get(p);
       const r = remote.get(p);
       const b = st.base[p];
+      if (expired(p)) {
+        // Trash past its time goes everywhere, whatever the other side holds.
+        if (l) expire.push(p);
+        if (r) drop.push(p);
+        continue;
+      }
       if (l === r) continue;
       if (l === b) (r ? pull : remove).push(p);
       else if (r === b) (l ? push : drop).push(p);
@@ -182,6 +211,10 @@ export class VaultSync {
     };
     await pool(pull, 6, async (p) => write(p, await github.blob(remote.get(p)!), remote.get(p)!));
     for (const p of remove) {
+      await local.remove(p);
+      delete st.hashes[p];
+    }
+    for (const p of expire) {
       await local.remove(p);
       delete st.hashes[p];
     }
@@ -210,6 +243,19 @@ export class VaultSync {
       changes.push({ path: `${folder}/${p}`, sha });
       next.set(p, sha);
     });
+    // Files deleted here are parked in the trash first. Their blob is already remote, so nothing is uploaded.
+    const deletedAt = stamp();
+    await pool(
+      drop.filter((p) => !p.startsWith(`${TRASH}/`)),
+      6,
+      async (p) => {
+        const sha = remote.get(p)!;
+        const kept = `${TRASH}/${deletedAt}/${p}`;
+        await write(kept, await github.blob(sha), sha);
+        changes.push({ path: `${folder}/${kept}`, sha });
+        next.set(kept, sha);
+      },
+    );
     for (const p of drop) {
       changes.push({ path: `${folder}/${p}`, sha: null });
       next.delete(p);

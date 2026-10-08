@@ -46,6 +46,14 @@ The token is saved in the plugin's `data.json`, which syncs with the vault, so a
 needs no re-entry. That puts it in plaintext in the repository: keep the repository private and
 scope the token to that one repository. Don't add `data.json` to the ignore list.
 
+## Deleted files
+
+Deleting a file in the vault deletes it in the repository too, but not for good: the sync first
+saves a copy to `.tmp/<date-time>/<original path>`. That folder is hidden in Obsidian and syncs
+to your other devices. Copies older than 2 days are deleted, locally and on GitHub. To get one
+back, run **Restore deleted file** from the command palette and pick it. It moves back to its
+original path, or next to it as `name (restored)` if something is there already.
+
 ## How it works
 
 - Each run reads the branch head. If nothing changed remotely and nothing changed locally, that
