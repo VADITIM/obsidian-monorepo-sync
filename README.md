@@ -1,52 +1,6 @@
 # Monorepo Git Sync
 
-Keep all your Obsidian vaults in **one GitHub repository**, each in its own folder.
-
-```
-Obsidian/            ← one GitHub repo (private)
-├── Work/            ← your "Work" vault
-└── Personal/        ← your "Personal" vault
-```
-
-Each vault syncs only its own folder and ignores the rest. It runs on desktop and on Android,
-and you don't need Git installed: the plugin talks to GitHub directly.
-
-## Install
-
-1. Download `main.js` and `manifest.json` from the
-   [latest release](https://github.com/VADITIM/obsidian-monorepo-sync/releases/latest).
-2. Put both files in `<your vault>/.obsidian/plugins/monorepo-git-sync/` (create the folder).
-3. In Obsidian, open **Settings → Community plugins** and turn on **Monorepo Git Sync**.
-
-**On Android**, the vault is wherever you created it, often `Documents/<vault name>`. The
-`.obsidian` folder is hidden, so use a file manager that shows hidden folders.
-
-**Prefer BRAT?** [BRAT](https://github.com/TfTHacker/obsidian42-brat) can install it for you:
-add `VADITIM/obsidian-monorepo-sync` as a beta plugin.
-
-You need Obsidian 1.13.0 or newer.
-
-## Set it up
-
-**1. Make the repository.** Create a private repository on GitHub and tick "Add a README" so it
-isn't empty. The plugin can't sync into a repository with no commits.
-
-**2. Make a token.** On GitHub, go to Settings → Developer settings → Personal access tokens →
-**Fine-grained tokens** and create one with:
-
-- Repository access: **only** your vault repository
-- Permissions: **Contents → Read and write**
-
-**3. Fill in the plugin settings.**
-
-| Setting      | What to enter                                    | Example     |
-| ------------ | ------------------------------------------------ | ----------- |
-| Repository   | The repo's URL or `owner/name`                   | `you/Obsidian` |
-| GitHub token | The token from step 2                            |             |
-| Vault folder | The folder in the repo this vault belongs to     | `Work`      |
-| Interval     | How often to sync, in minutes                    | `1`         |
-
-That's it. Repeat on each device and for each vault, giving every vault its own folder.
+Syncs each Obsidian vault with its own folder in one shared GitHub repository, on desktop and Android, with no Git install needed. Install it by copying `main.js` and `manifest.json` from the [latest release](https://github.com/VADITIM/obsidian-monorepo-sync/releases/latest) into `.obsidian/plugins/monorepo-git-sync/` (or add `VADITIM/obsidian-monorepo-sync` in [BRAT](https://github.com/TfTHacker/obsidian42-brat)) and enable it. In its settings, enter the repository (it needs at least one commit), a [fine-grained token](https://github.com/settings/personal-access-tokens) with **Contents: Read and write** on that repository only, and the folder this vault syncs to.
 
 ## Day to day
 
