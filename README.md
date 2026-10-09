@@ -1,89 +1,114 @@
 # Monorepo Git Sync
 
-Syncs an Obsidian vault with **one folder** of a shared GitHub repository, so all your vaults
-live in a single repo:
+Keep all your Obsidian vaults in **one GitHub repository**, each in its own folder.
 
 ```
-Obsidian/            ← one GitHub repo (private or public)
-├── Work/            ← vault "Work" syncs here
-└── Personal/        ← vault "Personal" syncs here
+Obsidian/            ← one GitHub repo (private)
+├── Work/            ← your "Work" vault
+└── Personal/        ← your "Personal" vault
 ```
 
-Works on desktop and Android. Talks to GitHub's API directly, so no `git` install is needed.
+Each vault syncs only its own folder and ignores the rest. It runs on desktop and on Android,
+and you don't need Git installed: the plugin talks to GitHub directly.
 
 ## Install
 
-Download `main.js` and `manifest.json` from the
-[latest release](https://github.com/VADITIM/obsidian-monorepo-sync/releases/latest) into
-`<your vault>/.obsidian/plugins/monorepo-git-sync/`, then enable **Monorepo Git Sync** under
-Settings → Community plugins.
+1. Download `main.js` and `manifest.json` from the
+   [latest release](https://github.com/VADITIM/obsidian-monorepo-sync/releases/latest).
+2. Put both files in `<your vault>/.obsidian/plugins/monorepo-git-sync/` (create the folder).
+3. In Obsidian, open **Settings → Community plugins** and turn on **Monorepo Git Sync**.
 
-On Android, the vault folder is wherever you created the vault (often `Documents/<vault>`). Use
-a file manager that shows hidden folders to reach `.obsidian`.
-[BRAT](https://github.com/TfTHacker/obsidian42-brat) can install it from this repository instead:
+**On Android**, the vault is wherever you created it, often `Documents/<vault name>`. The
+`.obsidian` folder is hidden, so use a file manager that shows hidden folders.
+
+**Prefer BRAT?** [BRAT](https://github.com/TfTHacker/obsidian42-brat) can install it for you:
 add `VADITIM/obsidian-monorepo-sync` as a beta plugin.
 
-Requires Obsidian 1.13.0 or newer.
+You need Obsidian 1.13.0 or newer.
 
-## Setup
+## Set it up
 
-1. Create a **fine-grained token** on GitHub (Settings → Developer settings → Personal access
-   tokens → Fine-grained tokens). Repository access: only your vault repository. Permissions:
-   **Contents → Read and write**.
-2. In the plugin settings:
+**1. Make the repository.** Create a private repository on GitHub and tick "Add a README" so it
+isn't empty. The plugin can't sync into a repository with no commits.
 
-   | Field        | Example                            |
-   | ------------ | ---------------------------------- |
-   | Repository   | `https://github.com/you/Obsidian` or `you/Obsidian` |
-   | GitHub token | the token from step 1              |
-   | Vault folder | `Work`                             |
-   | Interval     | `1` (minutes)                      |
+**2. Make a token.** On GitHub, go to Settings → Developer settings → Personal access tokens →
+**Fine-grained tokens** and create one with:
 
-The repository needs at least one commit (create it with a README). The plugin syncs on startup,
-every interval, and from the ribbon icon or the **Sync now** command.
+- Repository access: **only** your vault repository
+- Permissions: **Contents → Read and write**
 
-The token is saved in the plugin's `data.json`, which syncs with the vault, so a copied vault
-needs no re-entry. That puts it in plaintext in the repository: keep the repository private and
-scope the token to that one repository. Don't add `data.json` to the ignore list.
+**3. Fill in the plugin settings.**
 
-## Deleted files
+| Setting      | What to enter                                    | Example     |
+| ------------ | ------------------------------------------------ | ----------- |
+| Repository   | The repo's URL or `owner/name`                   | `you/Obsidian` |
+| GitHub token | The token from step 2                            |             |
+| Vault folder | The folder in the repo this vault belongs to     | `Work`      |
+| Interval     | How often to sync, in minutes                    | `1`         |
 
-Deleting a file in the vault deletes it in the repository too, but not for good: the sync first
-saves a copy to `.tmp/<date-time>/<original path>`. That folder is hidden in Obsidian and syncs
-to your other devices. Copies older than 2 days are deleted, locally and on GitHub. To get one
-back, run **Restore deleted file** from the command palette and pick it. It moves back to its
-original path, or next to it as `name (restored)` if something is there already.
+That's it. Repeat on each device and for each vault, giving every vault its own folder.
+
+## Day to day
+
+The plugin syncs when Obsidian starts and then every few minutes on its own. To sync right now,
+click the ribbon icon or run **Sync now** from the command palette.
+
+### If two devices edit the same note
+
+You won't lose anything. Your local version stays where it is, and the other version is saved
+next to it as `note.sync-conflict-YYYYMMDD-HHMMSS.md`. Compare the two, keep what you want, and
+delete the other.
+
+The same thing happens the first time you connect a vault to a folder that already has
+different copies of the same files. Notes that differ only in line endings don't count as
+conflicts.
+
+### If you delete something by mistake
+
+Deleted files are kept for **2 days**. To get one back, run **Restore deleted file** from the
+command palette and pick it from the list. It returns to where it was, or next to it as
+`name (restored)` if a file already sits there.
+
+Behind the scenes, the copies live in a hidden `.tmp` folder that syncs between your devices,
+so you can restore on a different device from the one you deleted on.
+
+### What gets synced
+
+Your notes and attachments, plus most of `.obsidian/`: plugins, themes and settings. The
+**Ignore** setting lists what stays out. By default that's the `.trash` folder and the window
+layout, which is different on every device.
+
+## Your token and your privacy
+
+**Keep the repository private.** The token is stored in the plugin's `data.json`, which syncs
+along with the vault so you don't have to enter it again on a copied vault. That also means the
+token sits in the repository in plain text. Limiting the token to this one repository keeps the
+damage small if it ever leaks. Don't add `data.json` to the Ignore list, or other devices won't
+get the token.
+
+The plugin only talks to `api.github.com`, only about the repository you configured. There is
+no telemetry. It reads and writes files only inside the vault.
 
 ## How it works
 
-- Each run reads the branch head. If nothing changed remotely and nothing changed locally, that
-  one request is the whole sync.
-- Only this vault's folder is read or written. Other vaults in the repo are never downloaded.
-- Changes are decided per file against the last synced state: pulled, pushed, or both. All local
-  changes go up as one commit. If another device pushed in between, the run starts over.
-- **Conflicts never lose data.** Your local version wins, and the other side is saved next to it
-  as `note.sync-conflict-YYYYMMDD-HHMMSS.md`. The same happens on the first sync, when the vault
-  and the repo folder both hold the same file with different content. Files that differ only in
-  line endings (CRLF vs LF) are not conflicts.
-- `.obsidian/` is synced (plugins, themes, settings) except the paths in **Ignore**, which by
-  default leaves out `.trash` and the per-device workspace layout. The plugin's own `state.json`
-  is per device and never synced.
+- Each sync starts with one request to check whether anything changed on GitHub. If nothing
+  changed there or locally, that's the whole sync.
+- Only this vault's folder is downloaded. Other vaults in the repository are never touched.
+- Every file is compared with how it looked after the last sync, so the plugin knows whether to
+  download it, upload it, or treat it as a conflict.
+- All local changes go up together as one commit. If another device pushed in the meantime,
+  the sync starts over.
+- Each device keeps its own `state.json` to remember the last sync. It is never synced.
 
-## Disclosures
+## For developers
 
-- **Network**: requests go only to `api.github.com`, for the repository you configure,
-  authenticated with your token. No telemetry.
-- **Files**: reads and writes only inside this vault, including the config folder.
-
-## Releases
-
-Every push to `master` builds the plugin and publishes a release. The version is the patch after
-the newest tag (`1.0.0`, `1.0.1`, …). Bump `manifest.json` by hand to jump a minor or major
-version. The workflow commits the new version back to `master`, so pull before your next push.
-
-## Build from source
+Build from source:
 
 ```bash
 npm install
 npm run build
 ```
+
+Every push to `master` builds the plugin and publishes a release, bumping the patch version
+(`1.0.0`, `1.0.1`, …). To jump a minor or major version, edit `manifest.json` by hand. The
+release workflow commits the new version back to `master`, so pull before your next push.
